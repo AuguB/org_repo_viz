@@ -1,0 +1,1000 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Org Repo Visualizer</title>
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<style>
+/* ── Reset & base ── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; font-size: 13px; background: #0d1117; color: #e6edf3; }
+
+/* ── Layout ── */
+#app { display: flex; height: 100vh; }
+#sidebar-left, #sidebar-right { width: 260px; min-width: 260px; background: #161b22; border-color: #30363d; overflow-y: auto; display: flex; flex-direction: column; z-index: 10; }
+#sidebar-left { border-right: 1px solid #30363d; }
+#sidebar-right { border-left: 1px solid #30363d; }
+#graph-container { flex: 1; position: relative; overflow: hidden; cursor: grab; }
+#graph-container.panning { cursor: grabbing; }
+
+/* ── SVG edges layer ── */
+#edges-svg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
+.edge { stroke: #388bfd44; stroke-width: 1.5; fill: none; }
+.edge.highlighted { stroke: #58a6ff; stroke-width: 2; }
+.edge.dimmed { opacity: 0.08; }
+#arrowhead path { fill: #388bfd88; }
+#arrowhead-hi path { fill: #58a6ff; }
+
+/* ── Nodes layer ── */
+#nodes-layer { position: absolute; top: 0; left: 0; width: 0; height: 0; }
+
+/* ── Repo node tile ── */
+.repo-node {
+  position: absolute;
+  width: 260px;
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 8px;
+  user-select: none;
+  transition: border-color 0.15s, box-shadow 0.15s, opacity 0.2s;
+  will-change: transform;
+}
+.repo-node:hover { border-color: #58a6ff; box-shadow: 0 0 0 1px #58a6ff44; }
+.repo-node.dimmed { opacity: 0.12; }
+.repo-node.highlighted { border-color: #58a6ff; box-shadow: 0 0 12px #58a6ff44; z-index: 5; }
+
+/* Node header (drag handle) */
+.node-header {
+  padding: 8px 10px 6px;
+  cursor: grab;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  border-bottom: 1px solid #21262d;
+}
+.node-header:active { cursor: grabbing; }
+.node-title { flex: 1; min-width: 0; }
+.repo-name { font-weight: 600; font-size: 13px; color: #58a6ff; word-break: break-word; }
+.repo-name a { color: inherit; text-decoration: none; }
+.repo-name a:hover { text-decoration: underline; }
+.node-badges { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 3px; }
+.badge {
+  font-size: 10px; padding: 1px 5px; border-radius: 10px; font-weight: 500;
+  border: 1px solid;
+}
+.badge.archived { color: #f0883e; border-color: #f0883e44; background: #f0883e11; }
+.badge.private  { color: #a371f7; border-color: #a371f744; background: #a371f711; }
+.badge.fork     { color: #8b949e; border-color: #8b949e44; background: #8b949e11; }
+.repo-stars { font-size: 11px; color: #8b949e; white-space: nowrap; padding-top: 2px; }
+
+.node-desc {
+  padding: 5px 10px 4px;
+  font-size: 11px;
+  color: #8b949e;
+  line-height: 1.4;
+  min-height: 20px;
+}
+
+/* Sections container */
+.node-sections { border-top: 1px solid #21262d; }
+
+/* Details toggle button */
+.details-toggle {
+  display: block;
+  width: 100%;
+  padding: 5px 10px;
+  background: none;
+  border: none;
+  border-top: 1px solid #21262d;
+  color: #8b949e;
+  font-size: 11px;
+  cursor: pointer;
+  text-align: left;
+}
+.details-toggle:hover { color: #e6edf3; background: #1c2128; }
+
+/* Individual section */
+.section { border-bottom: 1px solid #21262d; }
+.section:last-child { border-bottom: none; }
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 10px;
+  cursor: pointer;
+  font-size: 11px;
+  color: #8b949e;
+  gap: 4px;
+}
+.section-header:hover { background: #1c2128; color: #e6edf3; }
+.section-header .label { flex: 1; }
+.section-arrow { font-size: 9px; transition: transform 0.15s; }
+.section.open .section-arrow { transform: rotate(90deg); }
+.section-body { display: none; padding: 6px 10px 8px; font-size: 11px; line-height: 1.5; }
+.section.open .section-body { display: block; }
+
+/* When details are collapsed, hide closed sections */
+.node-sections.collapsed .section:not(.open) { display: none; }
+
+/* ── Section content styles ── */
+.created-date { color: #e6edf3; }
+
+/* Contributors */
+.contributor { display: flex; align-items: center; gap: 6px; padding: 2px 0; }
+.contrib-avatar { width: 20px; height: 20px; border-radius: 50%; }
+.contrib-name { flex: 1; color: #58a6ff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.contrib-stats { font-size: 10px; color: #8b949e; white-space: nowrap; }
+
+/* Sparkline */
+.sparkline-wrap { margin: 2px 0; }
+.sparkline-wrap svg { display: block; }
+
+/* Languages */
+.lang-row { display: flex; align-items: center; gap: 6px; margin: 2px 0; }
+.lang-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+.lang-name { flex: 1; color: #e6edf3; }
+.lang-bar-track { flex: 2; background: #21262d; border-radius: 2px; height: 4px; }
+.lang-bar-fill { height: 4px; border-radius: 2px; }
+.lang-pct { font-size: 10px; color: #8b949e; width: 34px; text-align: right; }
+
+/* Dependencies */
+.dep-list { display: flex; flex-wrap: wrap; gap: 3px; }
+.dep-tag {
+  font-size: 10px; padding: 1px 6px; background: #1c2128; border: 1px solid #30363d;
+  border-radius: 10px; color: #8b949e; cursor: default;
+}
+.dep-tag.internal { color: #58a6ff; border-color: #388bfd44; background: #388bfd11; }
+.dep-section-label { font-size: 10px; color: #8b949e; margin: 4px 0 2px; }
+
+/* README */
+.readme-content {
+  max-height: 200px; overflow-y: auto; color: #8b949e;
+  white-space: pre-wrap; word-break: break-word; font-size: 10px;
+  line-height: 1.5; font-family: "SFMono-Regular", Consolas, monospace;
+}
+
+/* ── Sidebars ── */
+.sidebar-header {
+  padding: 12px 14px 10px;
+  font-weight: 600;
+  font-size: 13px;
+  border-bottom: 1px solid #30363d;
+  position: sticky; top: 0;
+  background: #161b22;
+  z-index: 1;
+}
+.sidebar-section { padding: 10px 14px; border-bottom: 1px solid #21262d; }
+.sidebar-section-title { font-size: 11px; font-weight: 600; color: #8b949e; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 8px; }
+
+/* Settings controls */
+.control-group { margin-bottom: 8px; }
+.control-label { font-size: 11px; color: #8b949e; margin-bottom: 5px; display: block; }
+.toggle-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+.toggle-row label { font-size: 12px; color: #e6edf3; cursor: pointer; }
+.toggle-switch {
+  position: relative; width: 30px; height: 16px; cursor: pointer;
+}
+.toggle-switch input { opacity: 0; width: 0; height: 0; position: absolute; }
+.toggle-track {
+  position: absolute; inset: 0; background: #30363d; border-radius: 8px;
+  transition: background 0.2s;
+}
+.toggle-switch input:checked + .toggle-track { background: #388bfd; }
+.toggle-thumb {
+  position: absolute; top: 2px; left: 2px; width: 12px; height: 12px;
+  background: #e6edf3; border-radius: 50%; transition: left 0.2s;
+}
+.toggle-switch input:checked ~ .toggle-thumb { left: 16px; }
+
+.section-expand-btn {
+  display: block; width: 100%; margin-bottom: 4px; padding: 4px 8px;
+  background: #1c2128; border: 1px solid #30363d; border-radius: 5px;
+  color: #e6edf3; font-size: 11px; cursor: pointer; text-align: left;
+}
+.section-expand-btn:hover { background: #21262d; border-color: #58a6ff; }
+
+/* Stats sidebar */
+.stat-number { font-size: 22px; font-weight: 700; color: #58a6ff; }
+.stat-label { font-size: 11px; color: #8b949e; }
+.stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.stat-card { background: #0d1117; border-radius: 6px; padding: 8px; }
+
+.lang-stat-row { display: flex; align-items: center; gap: 6px; margin: 3px 0; font-size: 11px; }
+.lang-stat-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.lang-stat-name { flex: 1; color: #e6edf3; }
+.lang-stat-val { color: #8b949e; }
+
+.dep-stat-row, .contrib-stat-row {
+  display: flex; align-items: center; gap: 6px; padding: 3px 4px;
+  border-radius: 4px; cursor: pointer; font-size: 11px;
+}
+.dep-stat-row:hover, .contrib-stat-row:hover { background: #1c2128; }
+.dep-stat-name { flex: 1; color: #e6edf3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dep-stat-count { font-size: 10px; color: #8b949e; }
+.contrib-stat-avatar { width: 18px; height: 18px; border-radius: 50%; }
+.contrib-stat-name { flex: 1; color: #e6edf3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.contrib-stat-count { font-size: 10px; color: #8b949e; }
+
+/* ── Loading / Error ── */
+#loading {
+  position: fixed; inset: 0; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; background: #0d1117; z-index: 100;
+  gap: 16px;
+}
+.spinner {
+  width: 36px; height: 36px; border: 3px solid #30363d;
+  border-top-color: #58a6ff; border-radius: 50%; animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.loading-text { color: #8b949e; font-size: 14px; }
+.error-box { background: #1c1215; border: 1px solid #da3633; border-radius: 8px; padding: 20px 28px; max-width: 480px; }
+.error-box h2 { color: #f85149; margin-bottom: 8px; }
+.error-box p { color: #8b949e; margin-bottom: 6px; line-height: 1.5; }
+.error-box code { background: #0d1117; padding: 1px 5px; border-radius: 3px; color: #e6edf3; font-family: monospace; }
+
+/* Zoom hint */
+#zoom-hint {
+  position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%);
+  font-size: 11px; color: #8b949e55; pointer-events: none; white-space: nowrap;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #30363d; border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<div id="loading">
+  <div class="spinner"></div>
+  <div class="loading-text">Loading data.json…</div>
+</div>
+
+<div id="app" style="display:none">
+
+  <!-- Settings sidebar (left) -->
+  <aside id="sidebar-left">
+    <div class="sidebar-header">Settings</div>
+
+    <div class="sidebar-section">
+      <div class="sidebar-section-title">Visibility</div>
+      <div class="toggle-row">
+        <label for="toggle-orphans">Show orphan nodes</label>
+        <label class="toggle-switch">
+          <input type="checkbox" id="toggle-orphans" checked onchange="applyVisibility()">
+          <div class="toggle-track"></div>
+          <div class="toggle-thumb"></div>
+        </label>
+      </div>
+      <div class="toggle-row">
+        <label for="toggle-standalone">Show standalone packages</label>
+        <label class="toggle-switch">
+          <input type="checkbox" id="toggle-standalone" checked onchange="applyVisibility()">
+          <div class="toggle-track"></div>
+          <div class="toggle-thumb"></div>
+        </label>
+      </div>
+    </div>
+
+    <div class="sidebar-section">
+      <div class="sidebar-section-title">Expand section for all nodes</div>
+      <button class="section-expand-btn" onclick="expandAllSection('created')">📅 Created date</button>
+      <button class="section-expand-btn" onclick="expandAllSection('contributors')">👥 Contributors</button>
+      <button class="section-expand-btn" onclick="expandAllSection('commits')">📈 Commit frequency</button>
+      <button class="section-expand-btn" onclick="expandAllSection('languages')">💻 Languages</button>
+      <button class="section-expand-btn" onclick="expandAllSection('dependencies')">📦 Dependencies</button>
+      <button class="section-expand-btn" onclick="expandAllSection('readme')">📄 README</button>
+    </div>
+
+    <div class="sidebar-section">
+      <div class="sidebar-section-title">Graph</div>
+      <button class="section-expand-btn" onclick="resetLayout()">Reset layout</button>
+      <button class="section-expand-btn" onclick="resetView()">Reset view</button>
+    </div>
+
+    <div class="sidebar-section" style="margin-top:auto; border-top: 1px solid #30363d;">
+      <div id="org-meta" style="font-size:11px; color:#8b949e; line-height:1.6;"></div>
+    </div>
+  </aside>
+
+  <!-- Graph -->
+  <div id="graph-container">
+    <svg id="edges-svg">
+      <defs>
+        <marker id="arrowhead" viewBox="0 -5 10 10" refX="12" refY="0" markerWidth="6" markerHeight="6" orient="auto">
+          <path d="M0,-5L10,0L0,5"/>
+        </marker>
+        <marker id="arrowhead-hi" viewBox="0 -5 10 10" refX="12" refY="0" markerWidth="6" markerHeight="6" orient="auto">
+          <path d="M0,-5L10,0L0,5"/>
+        </marker>
+      </defs>
+      <g id="edges-group"></g>
+    </svg>
+    <div id="nodes-layer"></div>
+    <div id="zoom-hint">Scroll to zoom · Drag background to pan · Drag nodes to reposition</div>
+  </div>
+
+  <!-- Stats sidebar (right) -->
+  <aside id="sidebar-right">
+    <div class="sidebar-header">Stats — <span id="stats-org-name"></span></div>
+
+    <div class="sidebar-section">
+      <div class="stat-grid">
+        <div class="stat-card">
+          <div class="stat-number" id="stat-repos">–</div>
+          <div class="stat-label">repos</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-number" id="stat-contributors">–</div>
+          <div class="stat-label">contributors</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="sidebar-section">
+      <div class="sidebar-section-title">Lines of code by language</div>
+      <div id="stats-languages"></div>
+    </div>
+
+    <div class="sidebar-section">
+      <div class="sidebar-section-title">Total commit activity (past year)</div>
+      <div id="stats-commits"></div>
+    </div>
+
+    <div class="sidebar-section">
+      <div class="sidebar-section-title">Popular external dependencies</div>
+      <div id="stats-deps"></div>
+    </div>
+
+    <div class="sidebar-section">
+      <div class="sidebar-section-title">Most active contributors</div>
+      <div id="stats-contributors"></div>
+    </div>
+  </aside>
+
+</div>
+
+<script>
+// ============================================================
+// Constants & state
+// ============================================================
+const NODE_WIDTH = 260;
+
+// GitHub language colors (subset)
+const LANG_COLORS = {
+  JavaScript:'#f1e05a', TypeScript:'#3178c6', Python:'#3572A5', Go:'#00ADD8',
+  Rust:'#dea584', Java:'#b07219', Ruby:'#701516', PHP:'#4F5D95', Swift:'#F05138',
+  Kotlin:'#A97BFF', C:'#555555', 'C++':'#f34b7d', 'C#':'#178600', HTML:'#e34c26',
+  CSS:'#563d7c', Shell:'#89e051', Vue:'#41b883', Dart:'#00B4AB', Scala:'#c22d40',
+  Elixir:'#6e4a7e', Haskell:'#5e5086', R:'#198ce7', MATLAB:'#e16737',
+};
+
+let DATA = null;         // full dataset
+let nodes = [];          // simulation nodes
+let links = [];          // simulation links
+let simulation = null;
+let vpTransform = { x: 0, y: 0, k: 1 };   // viewport pan/zoom
+let hoveredNodeId = null;
+let highlightedDepName = null;
+let highlightedContribLogin = null;
+
+// ============================================================
+// Bootstrap
+// ============================================================
+fetch('data.json')
+  .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+  .then(data => {
+    DATA = data;
+    document.getElementById('loading').style.display = 'none';
+    document.getElementById('app').style.display = 'flex';
+    initGraph();
+    initStats();
+    initPanZoom();
+  })
+  .catch(err => {
+    document.getElementById('loading').innerHTML = `
+      <div class="error-box">
+        <h2>Could not load data.json</h2>
+        <p>Run the data fetcher first:</p>
+        <p><code>python fetch.py &lt;your-org&gt;</code></p>
+        <p style="margin-top:10px;font-size:11px">Error: ${err.message}</p>
+      </div>`;
+  });
+
+// ============================================================
+// Graph initialisation
+// ============================================================
+function initGraph() {
+  const container = document.getElementById('graph-container');
+  const W = container.clientWidth;
+  const H = container.clientHeight;
+
+  // Build simulation node objects
+  nodes = DATA.repos.map((r, i) => ({
+    ...r,
+    x: W / 2 + (Math.random() - 0.5) * Math.min(W, 600),
+    y: H / 2 + (Math.random() - 0.5) * Math.min(H, 400),
+  }));
+
+  const nodeById = new Map(nodes.map(n => [n.id, n]));
+
+  links = [];
+  for (const repo of DATA.repos) {
+    for (const dep of repo.dependencies.internal) {
+      if (nodeById.has(dep)) {
+        links.push({ source: repo.id, target: dep });
+      }
+    }
+  }
+
+  // Simulation
+  simulation = d3.forceSimulation(nodes)
+    .force('link', d3.forceLink(links).id(d => d.id).distance(220))
+    .force('charge', d3.forceManyBody().strength(-500))
+    .force('center', d3.forceCenter(W / 2, H / 2))
+    .force('collision', d3.forceCollide(150))
+    .on('tick', onTick);
+
+  // Render edges
+  renderEdges();
+  // Render node tiles
+  renderNodes();
+  // Sidebar meta
+  document.getElementById('org-meta').innerHTML =
+    `Org: <strong style="color:#e6edf3">${DATA.org}</strong><br>
+     Generated: ${new Date(DATA.generated_at).toLocaleDateString()}`;
+}
+
+// ============================================================
+// Edge rendering
+// ============================================================
+let edgeEls = null;
+
+function renderEdges() {
+  const g = d3.select('#edges-group');
+  g.selectAll('*').remove();
+  edgeEls = g.selectAll('line')
+    .data(links)
+    .join('line')
+    .attr('class', 'edge')
+    .attr('marker-end', 'url(#arrowhead)');
+}
+
+// ============================================================
+// Node tile rendering
+// ============================================================
+function renderNodes() {
+  const layer = document.getElementById('nodes-layer');
+  layer.innerHTML = '';
+  for (const node of nodes) {
+    const el = createNodeEl(node);
+    layer.appendChild(el);
+    setupNodeInteraction(el, node);
+  }
+}
+
+function createNodeEl(node) {
+  const el = document.createElement('div');
+  el.className = 'repo-node';
+  el.id = `node-${CSS.escape(node.id)}`;
+
+  const badges = [
+    node.is_archived ? '<span class="badge archived">archived</span>' : '',
+    node.is_private  ? '<span class="badge private">private</span>'   : '',
+    node.is_fork     ? '<span class="badge fork">fork</span>'         : '',
+  ].join('');
+
+  el.innerHTML = `
+    <div class="node-header" data-node="${node.id}">
+      <div class="node-title">
+        <div class="repo-name"><a href="${node.url}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${esc(node.name)}</a></div>
+        ${badges ? `<div class="node-badges">${badges}</div>` : ''}
+      </div>
+      <span class="repo-stars">★ ${node.stars}</span>
+    </div>
+    <div class="node-desc">${esc((node.description || '').substring(0, 90))}</div>
+    <div class="node-sections collapsed">
+      ${buildSection(node, 'created',      '📅 Created')}
+      ${buildSection(node, 'contributors', '👥 Contributors')}
+      ${buildSection(node, 'commits',      '📈 Commit activity')}
+      ${buildSection(node, 'languages',    '💻 Languages')}
+      ${buildSection(node, 'dependencies', '📦 Dependencies')}
+      ${buildSection(node, 'readme',       '📄 README')}
+    </div>
+    <button class="details-toggle" data-node="${node.id}">▼ Details</button>
+  `;
+
+  // Details toggle
+  el.querySelector('.details-toggle').addEventListener('click', e => {
+    e.stopPropagation();
+    toggleDetails(node.id);
+  });
+
+  // Section headers
+  el.querySelectorAll('.section-header').forEach(hdr => {
+    hdr.addEventListener('click', e => {
+      e.stopPropagation();
+      toggleSection(hdr.closest('.section'));
+    });
+  });
+
+  return el;
+}
+
+function buildSection(node, key, label) {
+  return `
+    <div class="section" data-key="${key}" data-node="${node.id}">
+      <div class="section-header">
+        <span class="label">${label}</span>
+        <span class="section-arrow">▶</span>
+      </div>
+      <div class="section-body">${getSectionContent(node, key)}</div>
+    </div>`;
+}
+
+function getSectionContent(node, key) {
+  switch (key) {
+    case 'created': {
+      const d = node.created_at ? new Date(node.created_at).toLocaleDateString('en-US', {year:'numeric',month:'long',day:'numeric'}) : 'Unknown';
+      const u = node.pushed_at ? new Date(node.pushed_at).toLocaleDateString('en-US', {year:'numeric',month:'long',day:'numeric'}) : '–';
+      return `<div class="created-date">Created: ${d}<br>Last push: ${u}</div>`;
+    }
+    case 'contributors': {
+      if (!node.contributors.length) return '<em style="color:#8b949e">No contributor data</em>';
+      return node.contributors.slice(0, 10).map(c => `
+        <div class="contributor">
+          <img class="contrib-avatar" src="${c.avatar_url}" alt="${esc(c.login)}" loading="lazy">
+          <span class="contrib-name"><a href="${c.profile_url}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none">${esc(c.login)}</a></span>
+          <span class="contrib-stats">${c.commit_count} commits${c.pr_count ? ` · ${c.pr_count} PRs` : ''}</span>
+        </div>`).join('');
+    }
+    case 'commits': {
+      const data = node.commit_frequency || Array(52).fill(0);
+      return `<div class="sparkline-wrap">${sparkline(data, 238, 36)}</div>
+              <div style="font-size:10px;color:#8b949e;margin-top:2px">Past 52 weeks</div>`;
+    }
+    case 'languages': {
+      const langs = node.languages || {};
+      const total = Object.values(langs).reduce((a, b) => a + b, 0);
+      if (!total) return '<em style="color:#8b949e">No language data</em>';
+      return Object.entries(langs)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 8)
+        .map(([lang, bytes]) => {
+          const pct = (bytes / total * 100).toFixed(1);
+          const color = LANG_COLORS[lang] || '#8b949e';
+          return `<div class="lang-row">
+            <div class="lang-dot" style="background:${color}"></div>
+            <span class="lang-name">${esc(lang)}</span>
+            <div class="lang-bar-track"><div class="lang-bar-fill" style="width:${pct}%;background:${color}"></div></div>
+            <span class="lang-pct">${pct}%</span>
+          </div>`;
+        }).join('');
+    }
+    case 'dependencies': {
+      const internal = node.dependencies.internal || [];
+      const external = node.dependencies.external || [];
+      let html = '';
+      if (internal.length) {
+        html += `<div class="dep-section-label">Internal (${internal.length})</div>
+                 <div class="dep-list">${internal.map(d => `<span class="dep-tag internal">${esc(d)}</span>`).join('')}</div>`;
+      }
+      if (external.length) {
+        html += `<div class="dep-section-label" style="margin-top:${internal.length?'6px':'0'}">External (${external.length})</div>
+                 <div class="dep-list">${external.slice(0, 40).map(d => `<span class="dep-tag">${esc(d)}</span>`).join('')}</div>`;
+      }
+      return html || '<em style="color:#8b949e">No dependencies detected</em>';
+    }
+    case 'readme': {
+      if (!node.readme) return '<em style="color:#8b949e">No README</em>';
+      return `<div class="readme-content">${esc(node.readme.substring(0, 3000))}</div>`;
+    }
+  }
+  return '';
+}
+
+function toggleSection(sectionEl) {
+  sectionEl.classList.toggle('open');
+  // When a section is opened, make it visible even if details are collapsed
+  if (sectionEl.classList.contains('open')) {
+    sectionEl.style.display = '';
+  }
+}
+
+function toggleDetails(nodeId) {
+  const el = document.getElementById(`node-${CSS.escape(nodeId)}`);
+  const sectionsEl = el.querySelector('.node-sections');
+  const btn = el.querySelector('.details-toggle');
+  const isCollapsed = sectionsEl.classList.contains('collapsed');
+
+  if (isCollapsed) {
+    sectionsEl.classList.remove('collapsed');
+    btn.textContent = '▲ Details';
+    // Show all sections
+    el.querySelectorAll('.section').forEach(s => s.style.display = '');
+  } else {
+    sectionsEl.classList.add('collapsed');
+    btn.textContent = '▼ Details';
+    // Hide non-open sections (open ones stay visible)
+    el.querySelectorAll('.section:not(.open)').forEach(s => s.style.display = 'none');
+  }
+}
+
+// ============================================================
+// Settings actions
+// ============================================================
+function expandAllSection(key) {
+  document.querySelectorAll(`.section[data-key="${key}"]`).forEach(s => {
+    s.classList.add('open');
+    s.style.display = '';
+  });
+}
+
+function applyVisibility() {
+  const showOrphans = document.getElementById('toggle-orphans').checked;
+  const showStandalone = document.getElementById('toggle-standalone').checked;
+
+  // Build sets
+  const hasIncoming = new Set(links.map(l => typeof l.target === 'object' ? l.target.id : l.target));
+  const hasOutgoing = new Set(links.map(l => typeof l.source === 'object' ? l.source.id : l.source));
+
+  for (const node of nodes) {
+    const incoming = hasIncoming.has(node.id);
+    const outgoing = hasOutgoing.has(node.id);
+    const isOrphan = !incoming && !outgoing;
+    const isStandalone = !incoming && outgoing; // has deps but nothing depends on it
+
+    let visible = true;
+    if (isOrphan && !showOrphans) visible = false;
+    if (isStandalone && !showStandalone) visible = false;
+
+    node._hidden = !visible;
+    const el = document.getElementById(`node-${CSS.escape(node.id)}`);
+    if (el) el.style.display = visible ? '' : 'none';
+  }
+
+  updateEdgeVisibility();
+}
+
+function updateEdgeVisibility() {
+  if (!edgeEls) return;
+  edgeEls.style('display', d => {
+    const s = typeof d.source === 'object' ? d.source : nodes.find(n => n.id === d.source);
+    const t = typeof d.target === 'object' ? d.target : nodes.find(n => n.id === d.target);
+    return (s && s._hidden) || (t && t._hidden) ? 'none' : '';
+  });
+}
+
+function resetLayout() {
+  nodes.forEach(n => { n.fx = null; n.fy = null; });
+  simulation.alpha(0.8).restart();
+}
+
+function resetView() {
+  vpTransform = { x: 0, y: 0, k: 1 };
+  applyVpTransform();
+}
+
+// ============================================================
+// Hover / highlight
+// ============================================================
+function setupNodeInteraction(el, node) {
+  // Hover
+  el.addEventListener('mouseenter', () => {
+    hoveredNodeId = node.id;
+    applyHighlight();
+  });
+  el.addEventListener('mouseleave', () => {
+    hoveredNodeId = null;
+    applyHighlight();
+  });
+
+  // Drag (on header only)
+  const header = el.querySelector('.node-header');
+  header.addEventListener('mousedown', e => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    startNodeDrag(e, node, el);
+  });
+}
+
+function applyHighlight() {
+  const activeNodeId   = hoveredNodeId;
+  const activeDepName  = highlightedDepName;
+  const activeContrib  = highlightedContribLogin;
+
+  if (!activeNodeId && !activeDepName && !activeContrib) {
+    // No highlight — clear everything
+    document.querySelectorAll('.repo-node').forEach(el => {
+      el.classList.remove('dimmed', 'highlighted');
+    });
+    edgeEls && edgeEls.classed('dimmed', false).classed('highlighted', false)
+                      .attr('marker-end', 'url(#arrowhead)');
+    return;
+  }
+
+  let relatedIds = new Set();
+
+  if (activeNodeId) {
+    relatedIds.add(activeNodeId);
+    // Add nodes connected by edges
+    links.forEach(l => {
+      const sid = typeof l.source === 'object' ? l.source.id : l.source;
+      const tid = typeof l.target === 'object' ? l.target.id : l.target;
+      if (sid === activeNodeId) relatedIds.add(tid);
+      if (tid === activeNodeId) relatedIds.add(sid);
+    });
+  }
+
+  if (activeDepName) {
+    DATA.repos.forEach(r => {
+      if (r.dependencies.external.includes(activeDepName) ||
+          r.dependencies.internal.includes(activeDepName)) {
+        relatedIds.add(r.id);
+      }
+    });
+  }
+
+  if (activeContrib) {
+    DATA.repos.forEach(r => {
+      if (r.contributors.some(c => c.login === activeContrib)) {
+        relatedIds.add(r.id);
+      }
+    });
+  }
+
+  document.querySelectorAll('.repo-node').forEach(el => {
+    const nid = el.dataset ? el.id.replace('node-', '') : null;
+    // find the actual node id
+    const nodeId = el.id.startsWith('node-') ? el.id.slice(5) : null;
+    if (!nodeId) return;
+    const isRelated = relatedIds.has(nodeId);
+    el.classList.toggle('dimmed', !isRelated);
+    el.classList.toggle('highlighted', isRelated && nodeId === activeNodeId);
+  });
+
+  edgeEls && edgeEls
+    .classed('dimmed', d => {
+      const sid = typeof d.source === 'object' ? d.source.id : d.source;
+      const tid = typeof d.target === 'object' ? d.target.id : d.target;
+      return !relatedIds.has(sid) || !relatedIds.has(tid);
+    })
+    .classed('highlighted', d => {
+      const sid = typeof d.source === 'object' ? d.source.id : d.source;
+      const tid = typeof d.target === 'object' ? d.target.id : d.target;
+      return relatedIds.has(sid) && relatedIds.has(tid);
+    })
+    .attr('marker-end', d => {
+      const sid = typeof d.source === 'object' ? d.source.id : d.source;
+      const tid = typeof d.target === 'object' ? d.target.id : d.target;
+      return (relatedIds.has(sid) && relatedIds.has(tid))
+        ? 'url(#arrowhead-hi)'
+        : 'url(#arrowhead)';
+    });
+}
+
+// ============================================================
+// Node drag
+// ============================================================
+function startNodeDrag(e, node, el) {
+  const container = document.getElementById('graph-container');
+  const rect = container.getBoundingClientRect();
+
+  // Convert screen coords to graph coords
+  const toGraph = (cx, cy) => ({
+    x: (cx - rect.left - vpTransform.x) / vpTransform.k,
+    y: (cy - rect.top  - vpTransform.y) / vpTransform.k,
+  });
+
+  const startGraph = toGraph(e.clientX, e.clientY);
+  const origX = node.x;
+  const origY = node.y;
+
+  simulation.alphaTarget(0.2).restart();
+  node.fx = node.x;
+  node.fy = node.y;
+
+  const onMove = mv => {
+    const g = toGraph(mv.clientX, mv.clientY);
+    node.fx = origX + (g.x - startGraph.x);
+    node.fy = origY + (g.y - startGraph.y);
+  };
+
+  const onUp = () => {
+    simulation.alphaTarget(0);
+    node.fx = node.x;
+    node.fy = node.y;
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+  };
+
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup', onUp);
+}
+
+// ============================================================
+// Pan & Zoom
+// ============================================================
+function initPanZoom() {
+  const container = document.getElementById('graph-container');
+
+  // Zoom (wheel)
+  container.addEventListener('wheel', e => {
+    e.preventDefault();
+    const rect = container.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+    const delta = e.deltaY > 0 ? 0.85 : 1.18;
+    const newK = Math.max(0.15, Math.min(3, vpTransform.k * delta));
+    vpTransform.x = mx - (mx - vpTransform.x) * (newK / vpTransform.k);
+    vpTransform.y = my - (my - vpTransform.y) * (newK / vpTransform.k);
+    vpTransform.k = newK;
+    applyVpTransform();
+  }, { passive: false });
+
+  // Pan (drag on background)
+  let panStart = null;
+  container.addEventListener('mousedown', e => {
+    if (e.target !== container &&
+        !e.target.closest('#edges-svg') &&
+        e.target.id !== 'nodes-layer') return;
+    e.preventDefault();
+    panStart = { x: e.clientX - vpTransform.x, y: e.clientY - vpTransform.y };
+    container.classList.add('panning');
+  });
+  document.addEventListener('mousemove', e => {
+    if (!panStart) return;
+    vpTransform.x = e.clientX - panStart.x;
+    vpTransform.y = e.clientY - panStart.y;
+    applyVpTransform();
+  });
+  document.addEventListener('mouseup', () => {
+    if (panStart) {
+      panStart = null;
+      document.getElementById('graph-container').classList.remove('panning');
+    }
+  });
+}
+
+function applyVpTransform() {
+  const t = `translate(${vpTransform.x}px, ${vpTransform.y}px) scale(${vpTransform.k})`;
+  document.getElementById('edges-svg').style.transform = t;
+  document.getElementById('nodes-layer').style.transform = t;
+}
+
+// The SVG needs to be big enough in local coords; override its dimensions
+// so the transform works correctly.
+function patchSvgSize() {
+  const svg = document.getElementById('edges-svg');
+  svg.setAttribute('width', '100%');
+  svg.setAttribute('height', '100%');
+}
+
+// ============================================================
+// Tick handler
+// ============================================================
+function onTick() {
+  if (edgeEls) {
+    edgeEls
+      .attr('x1', d => d.source.x)
+      .attr('y1', d => d.source.y)
+      .attr('x2', d => d.target.x)
+      .attr('y2', d => d.target.y);
+  }
+
+  nodes.forEach(n => {
+    const el = document.getElementById(`node-${CSS.escape(n.id)}`);
+    if (el) {
+      el.style.transform = `translate(${n.x - NODE_WIDTH / 2}px, ${n.y - 50}px)`;
+    }
+  });
+}
+
+// ============================================================
+// Stats sidebar
+// ============================================================
+function initStats() {
+  const repos = DATA.repos;
+  document.getElementById('stats-org-name').textContent = DATA.org;
+  document.getElementById('stat-repos').textContent = repos.length;
+
+  const allContribs = new Set(repos.flatMap(r => r.contributors.map(c => c.login)));
+  document.getElementById('stat-contributors').textContent = allContribs.size;
+
+  // Languages
+  const langTotals = {};
+  repos.forEach(r => Object.entries(r.languages || {}).forEach(([l, b]) => {
+    langTotals[l] = (langTotals[l] || 0) + b;
+  }));
+  const totalBytes = Object.values(langTotals).reduce((a, b) => a + b, 0);
+  const topLangs = Object.entries(langTotals).sort((a, b) => b[1] - a[1]).slice(0, 8);
+  document.getElementById('stats-languages').innerHTML = topLangs.map(([lang, bytes]) => {
+    const color = LANG_COLORS[lang] || '#8b949e';
+    const kb = bytes > 1e6 ? `${(bytes/1e6).toFixed(1)}M` : bytes > 1e3 ? `${(bytes/1e3).toFixed(0)}K` : `${bytes}`;
+    const pct = (bytes / totalBytes * 100).toFixed(1);
+    return `<div class="lang-stat-row">
+      <div class="lang-stat-dot" style="background:${color}"></div>
+      <span class="lang-stat-name">${esc(lang)}</span>
+      <span class="lang-stat-val">${pct}% (${kb}B)</span>
+    </div>`;
+  }).join('');
+
+  // Commit frequency aggregate
+  const weeklyTotals = Array(52).fill(0);
+  repos.forEach(r => (r.commit_frequency || []).forEach((v, i) => { weeklyTotals[i] = (weeklyTotals[i] || 0) + v; }));
+  document.getElementById('stats-commits').innerHTML =
+    `<div class="sparkline-wrap">${sparkline(weeklyTotals, 228, 40)}</div>
+     <div style="font-size:10px;color:#8b949e;margin-top:2px">Past 52 weeks · ${weeklyTotals.reduce((a,b)=>a+b,0)} total commits</div>`;
+
+  // Popular external deps
+  const depCounts = {};
+  repos.forEach(r => (r.dependencies.external || []).forEach(d => {
+    depCounts[d] = (depCounts[d] || 0) + 1;
+  }));
+  const topDeps = Object.entries(depCounts).filter(([,c]) => c > 1).sort((a,b)=>b[1]-a[1]).slice(0, 15);
+  document.getElementById('stats-deps').innerHTML = topDeps.map(([dep, count]) => `
+    <div class="dep-stat-row"
+         onmouseenter="setHighlightDep('${esc(dep)}')"
+         onmouseleave="setHighlightDep(null)">
+      <span class="dep-stat-name">${esc(dep)}</span>
+      <span class="dep-stat-count">${count} repos</span>
+    </div>`).join('') || '<em style="color:#8b949e;font-size:11px">No shared dependencies found</em>';
+
+  // Top contributors
+  const contribTotals = {};
+  const contribMeta = {};
+  repos.forEach(r => r.contributors.forEach(c => {
+    contribTotals[c.login] = (contribTotals[c.login] || 0) + c.commit_count;
+    contribMeta[c.login] = c;
+  }));
+  const topContribs = Object.entries(contribTotals).sort((a,b)=>b[1]-a[1]).slice(0, 12);
+  document.getElementById('stats-contributors').innerHTML = topContribs.map(([login, total]) => {
+    const meta = contribMeta[login] || {};
+    return `<div class="contrib-stat-row"
+         onmouseenter="setHighlightContrib('${esc(login)}')"
+         onmouseleave="setHighlightContrib(null)">
+      <img class="contrib-stat-avatar" src="${meta.avatar_url || ''}" alt="${esc(login)}" loading="lazy">
+      <span class="contrib-stat-name">${esc(login)}</span>
+      <span class="contrib-stat-count">${total} commits</span>
+    </div>`;
+  }).join('');
+}
+
+function setHighlightDep(name) {
+  highlightedDepName = name;
+  applyHighlight();
+}
+
+function setHighlightContrib(login) {
+  highlightedContribLogin = login;
+  applyHighlight();
+}
+
+// ============================================================
+// Utilities
+// ============================================================
+function esc(str) {
+  return String(str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function sparkline(data, width, height) {
+  if (!data || !data.length) return '';
+  const max = Math.max(...data, 1);
+  const n = data.length;
+  const barW = width / n;
+
+  const bars = data.map((v, i) => {
+    const h = Math.max((v / max) * height, v > 0 ? 1 : 0);
+    const x = i * barW;
+    const y = height - h;
+    return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${(barW - 0.5).toFixed(1)}" height="${h.toFixed(1)}" rx="1" fill="#388bfd" opacity="0.75"/>`;
+  }).join('');
+
+  return `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg">${bars}</svg>`;
+}
+</script>
+</body>
+</html>
