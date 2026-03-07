@@ -753,34 +753,6 @@ let dependentsMap = {};     // repoId -> [repoId, ...] that depend on it
 let layoutVisibleOnly = true;
 let currentForceValues = { charge: 20, attract: 0.5, linkDist: 200, collision: 150 };
 
-// Custom charge force: hidden nodes don't repel visible nodes,
-// but visible nodes still repel hidden nodes, and hidden nodes repel each other.
-function asymmetricCharge(strength) {
-  let _nodes, _s = strength;
-  function force(alpha) {
-    for (let i = 0; i < _nodes.length; i++) {
-      const a = _nodes[i];
-      for (let j = i + 1; j < _nodes.length; j++) {
-        const b = _nodes[j];
-        // Skip pair if it would affect visible from hidden direction only
-        const aVis = !a._hidden, bVis = !b._hidden;
-        const affectA = !(b._hidden && aVis);  // a not affected if b is hidden and a is visible
-        const affectB = !(a._hidden && bVis);  // b not affected if a is hidden and b is visible
-        if (!affectA && !affectB) continue;
-        const dx = b.x - a.x || 1e-6;
-        const dy = b.y - a.y || 1e-6;
-        const d2 = Math.max(dx * dx + dy * dy, 1);
-        const f = _s * alpha / d2;
-        if (affectA) { a.vx -= dx * f; a.vy -= dy * f; }
-        if (affectB) { b.vx += dx * f; b.vy += dy * f; }
-      }
-    }
-  }
-  force.initialize = n => { _nodes = n; };
-  force.strength = s => { if (s === undefined) return _s; _s = s; return force; };
-  return force;
-}
-
 // ============================================================
 // Bootstrap
 // ============================================================
@@ -842,7 +814,7 @@ function initGraph() {
   simulation = d3.forceSimulation(nodes)
     .randomSource(d3.randomLcg(42))
     .force('link',      d3.forceLink(links).id(d => d.id).distance(200).strength(0.5))
-    .force('charge',    asymmetricCharge(20))
+    .force('charge',    d3.forceManyBody().strength(20))
     .force('collision', d3.forceCollide(150))
     .force('x',         d3.forceX(W0 / 2).strength(0.08))
     .force('y',         d3.forceY(H0 / 2).strength(0.08))
@@ -1189,7 +1161,7 @@ function applyFilters() {
 
   const visibilityChanged = nodes.some(n => n._hidden !== prevHidden.has(n.id));
   if (visibilityChanged) {
-    nodes.forEach(n => { n.fx = null; n.fy = null; });
+    nodes.forEach(n => { if (n._hidden) { n.fx = n.x; n.fy = n.y; } else { n.fx = null; n.fy = null; } });
     applyForces();
     simulation.alpha(1).restart();
   }
@@ -1373,17 +1345,23 @@ function updateEdgeVisibility() {
 
 function applyForces() {
   const { charge, attract, linkDist, collision } = currentForceValues;
-  // asymmetricCharge reads _hidden itself — just set scalar strength
-  simulation.force('charge').strength(20);
-  simulation.force('link').strength(l => {
-    const sh = typeof l.source === 'object' ? l.source._hidden : false;
-    const th = typeof l.target === 'object' ? l.target._hidden : false;
-    return (sh || th) ? 0 : attract;
-  });
-  simulation.force('collision').radius(n => n._hidden ? 0 : collision);
-  // Hidden nodes get a small fixed pull to stay near centre; visible use the slider
-  simulation.force('x').strength(n => n._hidden ? 0.05 : charge / 250);
-  simulation.force('y').strength(n => n._hidden ? 0.05 : charge / 250);
+  if (layoutVisibleOnly) {
+    simulation.force('charge').strength(20);
+    simulation.force('link').strength(l => {
+      const sh = typeof l.source === 'object' ? l.source._hidden : false;
+      const th = typeof l.target === 'object' ? l.target._hidden : false;
+      return (sh || th) ? 0 : attract;
+    });
+    simulation.force('collision').radius(n => n._hidden ? 0 : collision);
+    simulation.force('x').strength(n => n._hidden ? 0 : charge / 250);
+    simulation.force('y').strength(n => n._hidden ? 0 : charge / 250);
+  } else {
+    simulation.force('charge').strength(20);
+    simulation.force('link').strength(attract);
+    simulation.force('collision').radius(collision);
+    simulation.force('x').strength(charge / 250);
+    simulation.force('y').strength(charge / 250);
+  }
   simulation.force('link').distance(linkDist);
 }
 
@@ -1801,22 +1779,24 @@ function updateStats() {
       <span class="dep-stat-count">${count} repos</span>
     </div>`).join('') || '<em style="color:#8b949e;font-size:11px">No shared dependencies found</em>';
 
-  // Contributors
-  const contribTotals = {};
+  // Contributors — count repos contributed to (avoids inflating with pre-org commit history)
+  const contribRepos = {};
   const contribMeta = {};
   repos.forEach(r => r.contributors.forEach(c => {
-    contribTotals[c.login] = (contribTotals[c.login] || 0) + c.commit_count;
+    if (!contribRepos[c.login]) contribRepos[c.login] = new Set();
+    contribRepos[c.login].add(r.id);
     contribMeta[c.login] = c;
   }));
-  const topContribs = Object.entries(contribTotals).sort((a,b)=>b[1]-a[1]).slice(0, 12);
-  document.getElementById('stats-contributors').innerHTML = topContribs.map(([login, total]) => {
+  const topContribs = Object.entries(contribRepos).sort((a,b)=>b[1].size-a[1].size).slice(0, 12);
+  document.getElementById('stats-contributors').innerHTML = topContribs.map(([login, repoSet]) => {
     const meta = contribMeta[login] || {};
+    const n = repoSet.size;
     return `<div class="contrib-stat-row"
          onmouseenter="setHighlightContrib('${esc(login)}')"
          onmouseleave="setHighlightContrib(null)">
       <img class="contrib-stat-avatar" src="${meta.avatar_url || ''}" alt="${esc(login)}" loading="lazy">
       <span class="contrib-stat-name">${esc(login)}</span>
-      <span class="contrib-stat-count">${total} commits</span>
+      <span class="contrib-stat-count">${n} ${n === 1 ? 'repo' : 'repos'}</span>
     </div>`;
   }).join('');
 }
