@@ -28,7 +28,17 @@ export GITHUB_TOKEN=ghp_xxxx
 uv run fetch.py <your-org>
 ```
 
-Open `docs/index.html` in your browser to preview the graph.
+Then serve the `docs/` folder with a local HTTP server (required for the JSON data to load correctly):
+
+```bash
+# Python (built-in)
+python3 -m http.server 8000
+
+# Node.js
+npx serve docs
+```
+
+Open `http://localhost:8000` in your browser to preview the graph.
 
 ## Creating a GitHub Token
 

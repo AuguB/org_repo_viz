@@ -281,6 +281,20 @@ html, body { height: 100%; overflow: hidden; font-family: -apple-system, BlinkMa
   color: #e6edf3; font-size: 11px; cursor: pointer; text-align: left;
 }
 .section-expand-btn:hover { background: #21262d; border-color: #58a6ff; }
+.toggle-3way {
+  position: relative; width: 46px; height: 16px; cursor: pointer; flex-shrink: 0;
+}
+.toggle-3way-track {
+  position: absolute; inset: 0; background: #30363d; border-radius: 8px; transition: background 0.2s;
+}
+.toggle-3way[data-value="public"] .toggle-3way-track,
+.toggle-3way[data-value="private"] .toggle-3way-track { background: #388bfd; }
+.toggle-3way-thumb {
+  position: absolute; top: 2px; left: 2px; width: 12px; height: 12px;
+  background: #e6edf3; border-radius: 50%; transition: left 0.2s;
+}
+.toggle-3way[data-value="public"]  .toggle-3way-thumb { left: 17px; }
+.toggle-3way[data-value="private"] .toggle-3way-thumb { left: 32px; }
 
 /* Stats sidebar */
 .stat-number { font-size: 22px; font-weight: 700; color: #58a6ff; }
@@ -428,8 +442,8 @@ html, body { height: 100%; overflow: hidden; font-family: -apple-system, BlinkMa
     <!-- Filter panel -->
     <div class="sidebar-section" id="filter-panel">
       <div class="filter-panel-header collapsed-hdr" onclick="toggleFilterPanel()">
-        <span class="sidebar-section-title" style="margin:0">Filter repos</span>
-        <span id="filter-active-count" class="filter-active-badge" style="display:none"></span>
+        <span class="sidebar-section-title" style="margin:0">Node filters</span>
+        <span id="filter-active-count" class="filter-active-badge" style="display:nonse"></span>
         <span class="filter-chevron">▾</span>
       </div>
       <div id="filter-body" class="hidden">
@@ -472,9 +486,32 @@ html, body { height: 100%; overflow: hidden; font-family: -apple-system, BlinkMa
     </div>
 
     <div class="sidebar-section">
-      <div class="sidebar-section-title">Visibility</div>
+      <div class="sidebar-section-title">Node visibility</div>
       <div class="toggle-row">
-        <label for="toggle-orphans">Show orphan nodes</label>
+        <label>Privacy <span id="privacy-val" style="color:#6e7681;font-weight:400">· all</span></label>
+        <div class="toggle-3way" id="toggle-privacy" data-value="all" onclick="cyclePrivacy()">
+          <div class="toggle-3way-track"></div>
+          <div class="toggle-3way-thumb"></div>
+        </div>
+      </div>
+      <div class="toggle-row">
+        <label for="toggle-archived">Archived</label>
+        <label class="toggle-switch">
+          <input type="checkbox" id="toggle-archived" checked onchange="applyVisibility()">
+          <div class="toggle-track"></div>
+          <div class="toggle-thumb"></div>
+        </label>
+      </div>
+      <div class="toggle-row">
+        <label for="toggle-forks">Forks</label>
+        <label class="toggle-switch">
+          <input type="checkbox" id="toggle-forks" checked onchange="applyVisibility()">
+          <div class="toggle-track"></div>
+          <div class="toggle-thumb"></div>
+        </label>
+      </div>
+      <div class="toggle-row">
+        <label for="toggle-orphans">Orphan nodes</label>
         <label class="toggle-switch">
           <input type="checkbox" id="toggle-orphans" checked onchange="applyVisibility()">
           <div class="toggle-track"></div>
@@ -482,7 +519,7 @@ html, body { height: 100%; overflow: hidden; font-family: -apple-system, BlinkMa
         </label>
       </div>
       <div class="toggle-row">
-        <label for="toggle-standalone">Show standalone packages</label>
+        <label for="toggle-standalone">Standalone packages</label>
         <label class="toggle-switch">
           <input type="checkbox" id="toggle-standalone" checked onchange="applyVisibility()">
           <div class="toggle-track"></div>
@@ -492,51 +529,96 @@ html, body { height: 100%; overflow: hidden; font-family: -apple-system, BlinkMa
     </div>
 
     <div class="sidebar-section">
-      <div class="sidebar-section-title">Toggle section for all nodes</div>
-      <button class="section-expand-btn" onclick="toggleAllSection('created')">📅 Created date</button>
-      <button class="section-expand-btn" onclick="toggleAllSection('contributors')">👥 Contributors</button>
-      <button class="section-expand-btn" onclick="toggleAllSection('commits')">📈 Commit frequency</button>
-      <button class="section-expand-btn" onclick="toggleAllSection('languages')">💻 Languages</button>
-      <button class="section-expand-btn" onclick="toggleAllSection('dependencies')">📦 Dependencies</button>
-    </div>
-
-    <div class="sidebar-section">
-      <div class="sidebar-section-title">Graph</div>
-      <button class="section-expand-btn" onclick="resetLayout()">Reset layout</button>
-      <button class="section-expand-btn" onclick="resetView()">Reset view</button>
-    </div>
-
-    <!-- Layout parameters -->
-    <div class="sidebar-section">
-      <div class="sidebar-section-title collapsible-title" onclick="toggleForcePanel()">
-        Force layout
-        <span class="collapsible-chevron" id="force-chevron" style="transform:rotate(-90deg)">▾</span>
+      <div class="sidebar-section-title">Section visibility</div>
+      <div class="toggle-row">
+        <label for="toggle-sec-all">All</label>
+        <label class="toggle-switch">
+          <input type="checkbox" id="toggle-sec-all" onchange="applyAllSectionToggle(this.checked)">
+          <div class="toggle-track"></div>
+          <div class="toggle-thumb"></div>
+        </label>
       </div>
-      <div class="collapsible-body closed" id="force-body">
-        <div class="force-group" style="margin-top:8px">
-          <label class="force-label">Center force <span class="filter-range-val" id="lp-gravity-val">0.005</span></label>
-          <div class="filter-range-row">
-            <input type="range" class="filter-range" id="lp-gravity" min="0" max="50" value="5">
-          </div>
-        </div>
-        <div class="force-group">
-          <label class="force-label">Attractive force <span class="filter-range-val" id="lp-attract-val">0.4</span></label>
-          <div class="filter-range-row">
-            <input type="range" class="filter-range" id="lp-attract" min="0" max="20" value="8">
-          </div>
-        </div>
-        <div class="force-group">
-          <label class="force-label">Min distance <span class="filter-range-val" id="lp-mindist-val">150</span></label>
-          <div class="filter-range-row">
-            <input type="range" class="filter-range" id="lp-mindist" min="20" max="500" step="10" value="150">
-          </div>
-        </div>
-        <button class="section-expand-btn" onclick="resetLayout()" style="margin-top:4px">Restart simulation</button>
+      <div class="toggle-row">
+        <label for="toggle-sec-created">📅 Created date</label>
+        <label class="toggle-switch">
+          <input type="checkbox" id="toggle-sec-created" onchange="setAllSection('created', this.checked)">
+          <div class="toggle-track"></div>
+          <div class="toggle-thumb"></div>
+        </label>
+      </div>
+      <div class="toggle-row">
+        <label for="toggle-sec-contributors">👥 Contributors</label>
+        <label class="toggle-switch">
+          <input type="checkbox" id="toggle-sec-contributors" onchange="setAllSection('contributors', this.checked)">
+          <div class="toggle-track"></div>
+          <div class="toggle-thumb"></div>
+        </label>
+      </div>
+      <div class="toggle-row">
+        <label for="toggle-sec-commits">📈 Commit frequency</label>
+        <label class="toggle-switch">
+          <input type="checkbox" id="toggle-sec-commits" onchange="setAllSection('commits', this.checked)">
+          <div class="toggle-track"></div>
+          <div class="toggle-thumb"></div>
+        </label>
+      </div>
+      <div class="toggle-row">
+        <label for="toggle-sec-languages">💻 Languages</label>
+        <label class="toggle-switch">
+          <input type="checkbox" id="toggle-sec-languages" onchange="setAllSection('languages', this.checked)">
+          <div class="toggle-track"></div>
+          <div class="toggle-thumb"></div>
+        </label>
+      </div>
+      <div class="toggle-row">
+        <label for="toggle-sec-dependencies">📦 Dependencies</label>
+        <label class="toggle-switch">
+          <input type="checkbox" id="toggle-sec-dependencies" onchange="setAllSection('dependencies', this.checked)">
+          <div class="toggle-track"></div>
+          <div class="toggle-thumb"></div>
+        </label>
       </div>
     </div>
 
-    <div class="sidebar-section" style="margin-top:auto; border-top: 1px solid #30363d;">
-      <div id="org-meta" style="font-size:11px; color:#8b949e; line-height:1.6;"></div>
+    <div style="margin-top:auto">
+      <div class="sidebar-section">
+        <div class="sidebar-section-title">Graph</div>
+        <button class="section-expand-btn" onclick="resetLayout()">Reset layout</button>
+        <button class="section-expand-btn" onclick="resetView()">Reset view</button>
+      </div>
+
+      <!-- Layout parameters -->
+      <div class="sidebar-section">
+        <div class="sidebar-section-title collapsible-title" onclick="toggleForcePanel()">
+          Force layout
+          <span class="collapsible-chevron" id="force-chevron" style="transform:rotate(-90deg)">▾</span>
+        </div>
+        <div class="collapsible-body closed" id="force-body">
+          <div class="force-group" style="margin-top:8px">
+            <label class="force-label">Center force <span class="filter-range-val" id="lp-gravity-val">0.005</span></label>
+            <div class="filter-range-row">
+              <input type="range" class="filter-range" id="lp-gravity" min="0" max="50" value="5">
+            </div>
+          </div>
+          <div class="force-group">
+            <label class="force-label">Attractive force <span class="filter-range-val" id="lp-attract-val">0.4</span></label>
+            <div class="filter-range-row">
+              <input type="range" class="filter-range" id="lp-attract" min="0" max="20" value="8">
+            </div>
+          </div>
+          <div class="force-group">
+            <label class="force-label">Min distance <span class="filter-range-val" id="lp-mindist-val">150</span></label>
+            <div class="filter-range-row">
+              <input type="range" class="filter-range" id="lp-mindist" min="20" max="500" step="10" value="150">
+            </div>
+          </div>
+          <button class="section-expand-btn" onclick="resetLayout()" style="margin-top:4px">Restart simulation</button>
+        </div>
+      </div>
+
+      <div class="sidebar-section" style="border-top: 1px solid #30363d;">
+        <div id="org-meta" style="font-size:11px; color:#8b949e; line-height:1.6;"></div>
+      </div>
     </div>
   </aside>
 
@@ -602,7 +684,7 @@ html, body { height: 100%; overflow: hidden; font-family: -apple-system, BlinkMa
     </div>
 
     <div class="sidebar-section">
-      <div class="sidebar-section-title">Lines of code by language</div>
+      <div class="sidebar-section-title">Languages</div>
       <div id="stats-languages"></div>
     </div>
 
@@ -612,12 +694,12 @@ html, body { height: 100%; overflow: hidden; font-family: -apple-system, BlinkMa
     </div>
 
     <div class="sidebar-section">
-      <div class="sidebar-section-title">Popular external dependencies</div>
+      <div class="sidebar-section-title">External dependencies</div>
       <div id="stats-deps"></div>
     </div>
 
     <div class="sidebar-section">
-      <div class="sidebar-section-title">Most active contributors</div>
+      <div class="sidebar-section-title">Contributors</div>
       <div id="stats-contributors"></div>
     </div>
   </aside>
@@ -647,6 +729,9 @@ let vpTransform = { x: 0, y: 0, k: 1 };   // viewport pan/zoom
 let hoveredNodeId = null;
 let highlightedDepName = null;
 let highlightedContribLogin = null;
+let focusedNodeId = null;
+let focusMode = null;       // 'with-deps' | 'node-only'
+let _dragHappened = false;  // true if mouse moved during last node drag
 
 // ============================================================
 // Bootstrap
@@ -1103,16 +1188,20 @@ function initLayoutControls() {
 // ============================================================
 // Settings actions
 // ============================================================
-function toggleAllSection(key) {
-  const sections = document.querySelectorAll(`.section[data-key="${key}"]`);
-  const anyOpen = Array.from(sections).some(s => s.classList.contains('open'));
-  sections.forEach(s => {
-    if (anyOpen) {
-      s.classList.remove('open');
-    } else {
-      s.classList.add('open');
-      s.style.display = '';
-    }
+const ALL_SECTION_KEYS = ['created', 'contributors', 'commits', 'languages', 'dependencies'];
+
+function setAllSection(key, open) {
+  document.querySelectorAll(`.section[data-key="${key}"]`).forEach(s => {
+    s.classList.toggle('open', open);
+    if (open) s.style.display = '';
+  });
+}
+
+function applyAllSectionToggle(open) {
+  ALL_SECTION_KEYS.forEach(k => {
+    const input = document.getElementById(`toggle-sec-${k}`);
+    if (input) input.checked = open;
+    setAllSection(k, open);
   });
 }
 
@@ -1124,11 +1213,22 @@ function toggleSidebar(side) {
   revealBtn.style.display = isCollapsed ? 'none' : 'flex';
 }
 
-function applyVisibility() {
-  const showOrphans = document.getElementById('toggle-orphans').checked;
-  const showStandalone = document.getElementById('toggle-standalone').checked;
+function cyclePrivacy() {
+  const el = document.getElementById('toggle-privacy');
+  const cycle = ['all', 'public', 'private'];
+  const next = cycle[(cycle.indexOf(el.dataset.value) + 1) % 3];
+  el.dataset.value = next;
+  document.getElementById('privacy-val').textContent = '· ' + next;
+  applyVisibility();
+}
 
-  // Build sets
+function applyVisibility() {
+  const showOrphans    = document.getElementById('toggle-orphans').checked;
+  const showStandalone = document.getElementById('toggle-standalone').checked;
+  const showArchived   = document.getElementById('toggle-archived').checked;
+  const showForks      = document.getElementById('toggle-forks').checked;
+  const privacy        = document.getElementById('toggle-privacy')?.dataset.value || 'all';
+
   const hasIncoming = new Set(links.map(l => typeof l.target === 'object' ? l.target.id : l.target));
   const hasOutgoing = new Set(links.map(l => typeof l.source === 'object' ? l.source.id : l.source));
 
@@ -1136,11 +1236,15 @@ function applyVisibility() {
     const incoming = hasIncoming.has(node.id);
     const outgoing = hasOutgoing.has(node.id);
     const isOrphan = !incoming && !outgoing;
-    const isStandalone = !incoming && outgoing; // has deps but nothing depends on it
+    const isStandalone = !incoming && outgoing;
 
     let visible = true;
     if (isOrphan && !showOrphans) visible = false;
     if (isStandalone && !showStandalone) visible = false;
+    if (!showArchived && node.is_archived) visible = false;
+    if (!showForks && node.is_fork) visible = false;
+    if (privacy === 'public' && node.is_private) visible = false;
+    if (privacy === 'private' && !node.is_private) visible = false;
     if (node._filteredOut) visible = false;
 
     node._hidden = !visible;
@@ -1163,14 +1267,21 @@ function updateEdgeVisibility() {
 
 function resetLayout() {
   const container = document.getElementById('graph-container');
-  simulation.force('gravity').x(container.clientWidth / 2).y(container.clientHeight / 2);
-  nodes.forEach(n => { n.fx = null; n.fy = null; });
-  simulation.alpha(0.8).restart();
+  const W = container.clientWidth;
+  const H = container.clientHeight;
+  const rng = d3.randomLcg(42);
+  simulation.force('gravity').x(W / 2).y(H / 2);
+  nodes.forEach(n => {
+    n.fx = null; n.fy = null;
+    n.x = W / 2 + (rng() - 0.5) * Math.min(W, 600);
+    n.y = H / 2 + (rng() - 0.5) * Math.min(H, 400);
+    n.vx = 0; n.vy = 0;
+  });
+  simulation.alpha(1).restart();
 }
 
 function resetView() {
-  vpTransform = { x: 0, y: 0, k: 1 };
-  applyVpTransform();
+  fitView();
 }
 
 function fitView() {
@@ -1190,12 +1301,53 @@ function fitView() {
 
   const gW = maxX - minX;
   const gH = maxY - minY;
-  const k  = Math.min((W - pad * 2) / gW, (H - pad * 2) / gH, 1);
+  const k  = Math.min((W - pad * 2) / gW, (H - pad * 2) / gH);
 
   vpTransform.k = k;
   vpTransform.x = W / 2 - (minX + gW / 2) * k;
   vpTransform.y = H / 2 - (minY + gH / 2) * k;
   applyVpTransform();
+}
+
+function fitToNodes(nodeList, pad = 80) {
+  const container = document.getElementById('graph-container');
+  const W = container.clientWidth;
+  const H = container.clientHeight;
+  if (!nodeList.length) return;
+  const xs = nodeList.map(n => n.x);
+  const ys = nodeList.map(n => n.y);
+  const minX = Math.min(...xs) - NODE_WIDTH / 2;
+  const maxX = Math.max(...xs) + NODE_WIDTH / 2;
+  const minY = Math.min(...ys) - 60;
+  const maxY = Math.max(...ys) + 120;
+  const gW = maxX - minX;
+  const gH = maxY - minY;
+  const k = Math.min((W - pad * 2) / gW, (H - pad * 2) / gH, 2);
+  vpTransform.k = k;
+  vpTransform.x = W / 2 - (minX + gW / 2) * k;
+  vpTransform.y = H / 2 - (minY + gH / 2) * k;
+  applyVpTransform();
+}
+
+function focusOnNode(nodeId, mode) {
+  focusedNodeId = nodeId;
+  focusMode = mode;
+  const node = nodes.find(n => n.id === nodeId);
+  if (!node) return;
+  let targetNodes;
+  if (mode === 'node-only') {
+    targetNodes = [node];
+  } else {
+    const relatedIds = new Set([nodeId]);
+    links.forEach(l => {
+      const sid = typeof l.source === 'object' ? l.source.id : l.source;
+      const tid = typeof l.target === 'object' ? l.target.id : l.target;
+      if (sid === nodeId) relatedIds.add(tid);
+      if (tid === nodeId) relatedIds.add(sid);
+    });
+    targetNodes = nodes.filter(n => relatedIds.has(n.id) && !n._hidden);
+  }
+  fitToNodes(targetNodes);
 }
 
 function zoomBy(factor) {
@@ -1223,13 +1375,33 @@ function setupNodeInteraction(el, node) {
     applyHighlight();
   });
 
-  // Drag (on header only)
+  // Drag + click/dblclick (on header only)
   const header = el.querySelector('.node-header');
   header.addEventListener('mousedown', e => {
     if (e.button !== 0) return;
     e.preventDefault();
     e.stopPropagation();
     startNodeDrag(e, node, el);
+  });
+
+  let _clickTimer = null;
+  header.addEventListener('click', e => {
+    e.stopPropagation();
+    if (_dragHappened) return;
+    if (_clickTimer) { clearTimeout(_clickTimer); _clickTimer = null; }
+    _clickTimer = setTimeout(() => {
+      _clickTimer = null;
+      focusOnNode(node.id, 'with-deps');
+    }, 220);
+  });
+  header.addEventListener('dblclick', e => {
+    e.stopPropagation();
+    if (_clickTimer) { clearTimeout(_clickTimer); _clickTimer = null; }
+    if (focusedNodeId === node.id) {
+      focusOnNode(node.id, focusMode === 'with-deps' ? 'node-only' : 'with-deps');
+    } else {
+      focusOnNode(node.id, 'with-deps');
+    }
   });
 }
 
@@ -1333,11 +1505,15 @@ function startNodeDrag(e, node, el) {
   const origX = node.x;
   const origY = node.y;
 
+  _dragHappened = false;
   simulation.alphaTarget(0.2).restart();
   node.fx = node.x;
   node.fy = node.y;
 
   const onMove = mv => {
+    const dx = mv.clientX - e.clientX;
+    const dy = mv.clientY - e.clientY;
+    if (Math.sqrt(dx * dx + dy * dy) > 5) _dragHappened = true;
     const g = toGraph(mv.clientX, mv.clientY);
     node.fx = origX + (g.x - startGraph.x);
     node.fy = origY + (g.y - startGraph.y);
