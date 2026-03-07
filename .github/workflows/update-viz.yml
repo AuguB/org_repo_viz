@@ -20,7 +20,7 @@ on:
       skip_private:
         description: 'Skip private repositories'
         type: boolean
-        default: false
+        default: true
 
 jobs:
   update:
@@ -46,7 +46,7 @@ jobs:
           ARGS=""
           if [ "${{ inputs.skip_forks }}" = "true" ]; then ARGS="$ARGS --skip-forks"; fi
           if [ "${{ inputs.skip_archived }}" = "true" ]; then ARGS="$ARGS --skip-archived"; fi
-          if [ "${{ inputs.skip_private }}" = "true" ]; then ARGS="$ARGS --skip-private"; fi
+          if [ "${{ inputs.skip_private == true || github.event_name != 'workflow_dispatch' }}" = "true" ]; then ARGS="$ARGS --skip-private"; fi
           python fetch.py $ARGS
 
       - name: Commit and push
