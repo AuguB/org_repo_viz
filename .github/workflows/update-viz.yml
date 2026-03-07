@@ -1,6 +1,10 @@
 name: Update visualization
 
 on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'docs/data.json'  # avoid re-triggering on the workflow's own commit
   schedule:
     - cron: '0 3 * * 1'  # Every Monday at 03:00 UTC
   workflow_dispatch:
@@ -11,6 +15,10 @@ on:
         default: false
       skip_archived:
         description: 'Skip archived repositories'
+        type: boolean
+        default: false
+      skip_private:
+        description: 'Skip private repositories'
         type: boolean
         default: false
 
@@ -38,6 +46,7 @@ jobs:
           ARGS=""
           if [ "${{ inputs.skip_forks }}" = "true" ]; then ARGS="$ARGS --skip-forks"; fi
           if [ "${{ inputs.skip_archived }}" = "true" ]; then ARGS="$ARGS --skip-archived"; fi
+          if [ "${{ inputs.skip_private }}" = "true" ]; then ARGS="$ARGS --skip-private"; fi
           python fetch.py $ARGS
 
       - name: Commit and push

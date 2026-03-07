@@ -355,6 +355,7 @@ Examples:
     parser.add_argument("--token", default=None, help="GitHub personal access token")
     parser.add_argument("--skip-forks", action="store_true", help="Skip forked repositories")
     parser.add_argument("--skip-archived", action="store_true", help="Skip archived repositories")
+    parser.add_argument("--skip-private", action="store_true", help="Skip private repositories")
     parser.add_argument("--limit", type=int, default=None, help="Process at most N repos (for testing)")
     args = parser.parse_args()
 
@@ -404,6 +405,8 @@ Examples:
         repos = [r for r in repos if not r.get("fork")]
     if args.skip_archived:
         repos = [r for r in repos if not r.get("archived")]
+    if args.skip_private:
+        repos = [r for r in repos if not r.get("private")]
     if args.limit:
         repos = repos[: args.limit]
 
