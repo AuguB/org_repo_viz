@@ -406,6 +406,7 @@ html, body { height: 100%; overflow: hidden; font-family: -apple-system, BlinkMa
 .lang-chip:hover { border-color: var(--chip-color, #58a6ff); color: #e6edf3; }
 .lang-chip.active { background: #1c2128; border-color: var(--chip-color, #58a6ff); color: #e6edf3; }
 .lang-chip-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--chip-color, #8b949e); flex-shrink: 0; }
+.contrib-chip-avatar { width: 14px; height: 14px; border-radius: 50%; flex-shrink: 0; }
 
 /* Force layout collapsible */
 .collapsible-title {
@@ -456,8 +457,9 @@ html, body { height: 100%; overflow: hidden; font-family: -apple-system, BlinkMa
           <div class="filter-chips" id="filter-lang-chips"></div>
         </div>
         <div class="filter-group">
-          <label class="filter-label">Contributor</label>
-          <input class="filter-input" id="filter-contrib" type="text" placeholder="GitHub login…">
+          <label class="filter-label">Contributors</label>
+          <input class="filter-input" id="filter-contrib-search" type="text" placeholder="Search contributors…" style="margin-bottom:5px">
+          <div class="filter-chips" id="filter-contrib-chips" style="max-height:171px;overflow-y:auto;padding-right:2px"></div>
         </div>
         <div class="filter-group">
           <label class="filter-label">Created date</label>
@@ -585,6 +587,14 @@ html, body { height: 100%; overflow: hidden; font-family: -apple-system, BlinkMa
         <div class="sidebar-section-title">Graph</div>
         <button class="section-expand-btn" onclick="resetLayout()">Reset layout</button>
         <button class="section-expand-btn" onclick="resetView()">Reset view</button>
+        <div class="toggle-row" style="margin-top:6px">
+          <label for="toggle-layout-visible">Layout visible only</label>
+          <label class="toggle-switch">
+            <input type="checkbox" id="toggle-layout-visible" onchange="layoutVisibleOnly = this.checked">
+            <div class="toggle-track"></div>
+            <div class="toggle-thumb"></div>
+          </label>
+        </div>
       </div>
 
       <!-- Layout parameters -->
@@ -738,6 +748,10 @@ let highlightedContribLogin = null;
 let focusedNodeId = null;
 let focusMode = null;       // 'with-deps' | 'node-only'
 let _dragHappened = false;  // true if mouse moved during last node drag
+let dependentsMap = {};     // repoId -> [repoId, ...] that depend on it
+// When true, resetLayout fixes hidden nodes and excludes them from forces
+let layoutVisibleOnly = true;
+let currentForceValues = { charge: 20, attract: 0.5, linkDist: 200, collision: 150 };
 
 // ============================================================
 // Bootstrap
@@ -783,20 +797,27 @@ function initGraph() {
   const nodeById = new Map(nodes.map(n => [n.id, n]));
 
   links = [];
+  dependentsMap = {};
   for (const repo of DATA.repos) {
     for (const dep of repo.dependencies.internal) {
       if (nodeById.has(dep)) {
         links.push({ source: repo.id, target: dep });
+        if (!dependentsMap[dep]) dependentsMap[dep] = [];
+        dependentsMap[dep].push(repo.id);
       }
     }
   }
 
   // Build simulation but don't start ticking yet
+  const W0 = document.getElementById('graph-container').clientWidth;
+  const H0 = document.getElementById('graph-container').clientHeight;
   simulation = d3.forceSimulation(nodes)
     .randomSource(d3.randomLcg(42))
     .force('link',      d3.forceLink(links).id(d => d.id).distance(200).strength(0.5))
     .force('charge',    d3.forceManyBody().strength(20))
     .force('collision', d3.forceCollide(150))
+    .force('x',         d3.forceX(W0 / 2).strength(0.08))
+    .force('y',         d3.forceY(H0 / 2).strength(0.08))
     .stop();
 
   // Pre-warm: run 300 ticks silently before first render
@@ -962,15 +983,20 @@ function getSectionContent(node, key) {
         }).join('');
     }
     case 'dependencies': {
-      const internal = node.dependencies.internal || [];
-      const external = node.dependencies.external || [];
+      const internal  = node.dependencies.internal || [];
+      const external  = node.dependencies.external || [];
+      const dependents = dependentsMap[node.id] || [];
       let html = '';
+      if (dependents.length) {
+        html += `<div class="dep-section-label">Dependents (${dependents.length})</div>
+                 <div class="dep-list">${dependents.map(d => `<span class="dep-tag internal">${esc(d)}</span>`).join('')}</div>`;
+      }
       if (internal.length) {
-        html += `<div class="dep-section-label">Internal (${internal.length})</div>
+        html += `<div class="dep-section-label" style="margin-top:${dependents.length?'6px':'0'}">Dependencies (${internal.length})</div>
                  <div class="dep-list">${internal.map(d => `<span class="dep-tag internal">${esc(d)}</span>`).join('')}</div>`;
       }
       if (external.length) {
-        html += `<div class="dep-section-label" style="margin-top:${internal.length?'6px':'0'}">External (${external.length})</div>
+        html += `<div class="dep-section-label" style="margin-top:${(dependents.length||internal.length)?'6px':'0'}">External (${external.length})</div>
                  <div class="dep-list">${external.slice(0, 40).map(d => `<span class="dep-tag">${esc(d)}</span>`).join('')}</div>`;
       }
       return html || '<em style="color:#8b949e">No dependencies detected</em>';
@@ -1016,7 +1042,7 @@ function toggleDetails(nodeId) {
 // ============================================================
 // Filter panel
 // ============================================================
-const filterState = { name: '', langs: new Set(), contributor: '', createdFrom: '', createdTo: '', pushedSince: '', minStars: 0 };
+const filterState = { name: '', langs: new Set(), contributors: new Set(), createdFrom: '', createdTo: '', pushedSince: '', minStars: 0 };
 
 function initFilterPanel() {
   // Language chips — sorted by total usage across repos
@@ -1060,8 +1086,43 @@ function initFilterPanel() {
   const starsInput = document.getElementById('filter-stars');
   starsInput.max = maxStars;
 
+  // Contributor chips — sorted by total commits across all repos
+  const contribTotals = {};
+  const contribMeta = {};
+  DATA.repos.forEach(r => r.contributors.forEach(c => {
+    contribTotals[c.login] = (contribTotals[c.login] || 0) + c.commit_count;
+    contribMeta[c.login] = c;
+  }));
+  const sortedContribs = Object.entries(contribTotals).sort((a, b) => b[1] - a[1]).map(([l]) => l);
+  const contribChipsEl = document.getElementById('filter-contrib-chips');
+  sortedContribs.forEach(login => {
+    const meta = contribMeta[login] || {};
+    const chip = document.createElement('div');
+    chip.className = 'lang-chip';
+    chip.dataset.login = login;
+    chip.innerHTML = `<img class="contrib-chip-avatar" src="${meta.avatar_url || ''}" alt="${esc(login)}" loading="lazy">${esc(login)}`;
+    chip.addEventListener('click', () => {
+      if (filterState.contributors.has(login)) {
+        filterState.contributors.delete(login);
+        chip.classList.remove('active');
+      } else {
+        filterState.contributors.add(login);
+        chip.classList.add('active');
+      }
+      applyFilters();
+    });
+    contribChipsEl.appendChild(chip);
+  });
+
+  // Search input filters visible chips only
+  document.getElementById('filter-contrib-search').addEventListener('input', e => {
+    const q = e.target.value.trim().toLowerCase();
+    contribChipsEl.querySelectorAll('.lang-chip').forEach(chip => {
+      chip.style.display = (!q || chip.dataset.login.toLowerCase().includes(q)) ? '' : 'none';
+    });
+  });
+
   document.getElementById('filter-name').addEventListener('input', applyFilters);
-  document.getElementById('filter-contrib').addEventListener('input', applyFilters);
   document.getElementById('filter-created-from').addEventListener('change', applyFilters);
   document.getElementById('filter-created-to').addEventListener('change', applyFilters);
   document.getElementById('filter-pushed-since').addEventListener('change', applyFilters);
@@ -1075,7 +1136,6 @@ function initFilterPanel() {
 
 function applyFilters() {
   filterState.name        = (document.getElementById('filter-name').value || '').trim().toLowerCase();
-  filterState.contributor = (document.getElementById('filter-contrib').value || '').trim().toLowerCase();
   filterState.createdFrom = document.getElementById('filter-created-from').value;
   filterState.createdTo   = document.getElementById('filter-created-to').value;
   filterState.pushedSince = document.getElementById('filter-pushed-since').value;
@@ -1095,11 +1155,20 @@ function applyFilters() {
   badge.textContent = active;
   badge.style.display = active > 0 ? '' : 'none';
 
+  const prevHidden = new Set(nodes.filter(n => n._hidden).map(n => n.id));
+
   applyVisibility();
+
+  const visibilityChanged = nodes.some(n => n._hidden !== prevHidden.has(n.id));
+  if (visibilityChanged) {
+    nodes.forEach(n => { if (n._hidden) { n.fx = n.x; n.fy = n.y; } else { n.fx = null; n.fy = null; } });
+    applyForces();
+    simulation.alpha(0.8).restart();
+  }
 }
 
 function nodeMatchesFilters(node) {
-  const { name, langs, contributor, createdFrom, createdTo, pushedSince, minStars } = filterState;
+  const { name, langs, contributors, createdFrom, createdTo, pushedSince, minStars } = filterState;
   if (name) {
     const hay = ((node.name || '') + ' ' + (node.description || '')).toLowerCase();
     if (!hay.includes(name)) return false;
@@ -1107,8 +1176,8 @@ function nodeMatchesFilters(node) {
   if (langs.size > 0) {
     if (!Object.keys(node.languages || {}).some(l => langs.has(l))) return false;
   }
-  if (contributor) {
-    if (!(node.contributors || []).some(c => c.login.toLowerCase().includes(contributor))) return false;
+  if (contributors.size > 0) {
+    if (!(node.contributors || []).some(c => contributors.has(c.login))) return false;
   }
   const created = node.created_at ? node.created_at.slice(0, 10) : null;
   if (createdFrom && (!created || created < createdFrom)) return false;
@@ -1123,7 +1192,7 @@ function countActiveFilters() {
   let c = 0;
   if (filterState.name) c++;
   if (filterState.langs.size > 0) c++;
-  if (filterState.contributor) c++;
+  if (filterState.contributors.size > 0) c++;
   if (filterState.createdFrom || filterState.createdTo) c++;
   if (filterState.pushedSince) c++;
   if (filterState.minStars > 0) c++;
@@ -1132,7 +1201,10 @@ function countActiveFilters() {
 
 function clearFilters() {
   document.getElementById('filter-name').value = '';
-  document.getElementById('filter-contrib').value = '';
+  document.getElementById('filter-contrib-search').value = '';
+  filterState.contributors.clear();
+  document.querySelectorAll('#filter-contrib-chips .lang-chip.active').forEach(c => c.classList.remove('active'));
+  document.querySelectorAll('#filter-contrib-chips .lang-chip').forEach(c => c.style.display = '');
   document.getElementById('filter-created-from').value = '';
   document.getElementById('filter-created-to').value = '';
   document.getElementById('filter-pushed-since').value = '';
@@ -1174,24 +1246,20 @@ function initLayoutControls() {
   };
 
   wire('lp-charge', 'lp-charge-val',
-    raw => raw,
-    v => v,
-    v => simulation.force('charge').strength(v)
+    raw => raw, v => v,
+    v => { currentForceValues.charge = v; applyForces(); }
   );
   wire('lp-attract', 'lp-attract-val',
-    raw => raw / 20,
-    v => v.toFixed(1),
-    v => simulation.force('link').strength(v)
+    raw => raw / 20, v => v.toFixed(1),
+    v => { currentForceValues.attract = v; applyForces(); }
   );
   wire('lp-linkdist', 'lp-linkdist-val',
-    raw => raw,
-    v => v,
-    v => simulation.force('link').distance(v)
+    raw => raw, v => v,
+    v => { currentForceValues.linkDist = v; applyForces(); }
   );
   wire('lp-mindist', 'lp-mindist-val',
-    raw => raw,
-    v => v,
-    v => simulation.force('collision').radius(v)
+    raw => raw, v => v,
+    v => { currentForceValues.collision = v; applyForces(); }
   );
 }
 
@@ -1275,17 +1343,44 @@ function updateEdgeVisibility() {
   });
 }
 
+function applyForces() {
+  const { charge, attract, linkDist, collision } = currentForceValues;
+  if (layoutVisibleOnly) {
+    simulation.force('charge').strength(20);
+    simulation.force('link').strength(l => {
+      const sh = typeof l.source === 'object' ? l.source._hidden : false;
+      const th = typeof l.target === 'object' ? l.target._hidden : false;
+      return (sh || th) ? 0 : attract;
+    });
+    simulation.force('collision').radius(n => n._hidden ? 0 : collision);
+    simulation.force('x').strength(n => n._hidden ? 0 : charge / 250);
+    simulation.force('y').strength(n => n._hidden ? 0 : charge / 250);
+  } else {
+    simulation.force('charge').strength(20);
+    simulation.force('link').strength(attract);
+    simulation.force('collision').radius(collision);
+    simulation.force('x').strength(charge / 250);
+    simulation.force('y').strength(charge / 250);
+  }
+  simulation.force('link').distance(linkDist);
+}
+
 function resetLayout() {
   const container = document.getElementById('graph-container');
   const W = container.clientWidth;
   const H = container.clientHeight;
   const rng = d3.randomLcg(42);
   nodes.forEach(n => {
-    n.fx = null; n.fy = null;
-    n.x = W / 2 + (rng() - 0.5) * Math.min(W, 600);
-    n.y = H / 2 + (rng() - 0.5) * Math.min(H, 400);
-    n.vx = 0; n.vy = 0;
+    if (layoutVisibleOnly && n._hidden) {
+      n.fx = n.x; n.fy = n.y;
+    } else {
+      n.fx = null; n.fy = null;
+      n.x = W / 2 + (rng() - 0.5) * Math.min(W, 600);
+      n.y = H / 2 + (rng() - 0.5) * Math.min(H, 400);
+      n.vx = 0; n.vy = 0;
+    }
   });
+  applyForces();
   simulation.alpha(1).restart();
 }
 
