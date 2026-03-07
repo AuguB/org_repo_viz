@@ -2,15 +2,30 @@
 
 Interactive force-directed graph of a GitHub organisation's repositories and their interdependencies.
 
-## Quick start
+## Host this in your org (5 minutes)
+
+1. **Fork or clone** this repo into your GitHub org.
+
+2. **Create a Personal Access Token (PAT)** with `repo` (or `public_repo` for public-only) and `read:org` scopes:
+   - Go to **GitHub → Settings → Developer settings → Personal access tokens → Tokens (classic)**
+   - Add it as a repository secret named `GH_TOKEN` under **Settings → Secrets and variables → Actions**.
+
+3. **Enable GitHub Pages**: go to **Settings → Pages → Branch: `main` / Folder: `/docs`** and save.
+
+4. **Run the workflow**: go to **Actions → Update visualization → Run workflow**.
+   Data is fetched automatically every Monday at 03:00 UTC after that.
+
+Your graph will be live at `https://<your-org>.github.io/<repo-name>/`.
+
+---
+
+## Local usage
 
 ```bash
-pip install requests
-
 # Set your GitHub token (needs read:org + repo or public_repo scope)
 export GITHUB_TOKEN=ghp_xxxx
 
-python fetch.py <your-org>
+uv run fetch.py <your-org>
 ```
 
 Open `docs/index.html` in your browser to preview the graph.
@@ -31,7 +46,7 @@ GITHUB_TOKEN="ghp_yourActualTokenHere"
 ## Options
 
 ```
-python fetch.py <org> [--output PATH] [--skip-forks] [--skip-archived] [--limit N]
+uv run fetch.py <org> [--output PATH] [--skip-forks] [--skip-archived] [--limit N]
 ```
 
 | Flag | Default | Description |
@@ -40,16 +55,6 @@ python fetch.py <org> [--output PATH] [--skip-forks] [--skip-archived] [--limit 
 | `--skip-forks` | false | Skip forked repositories |
 | `--skip-archived` | false | Skip archived repositories |
 | `--limit N` | all | Process at most N repos (useful for testing) |
-
-## Publish to GitHub Pages
-
-```bash
-git add docs/
-git commit -m "Update viz data"
-git push
-```
-
-Then go to **Settings → Pages → Branch: `main` / Folder: `/docs`** and save. Your graph will be live at `https://<you>.github.io/<repo>/`.
 
 ## Features
 
