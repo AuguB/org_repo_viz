@@ -232,7 +232,7 @@ def extract_deps(client, owner, repo, languages):
         content = fetch_file(client, owner, repo, "go.mod")
         if content:
             for line in content.splitlines():
-                m = re.match(r'\s+([\w./\-]+)\s+v[\d.]+', line)
+                m = re.match(r'(?:\s+|require\s+)([\w./\-]+)\s+v[\w.\-+]+', line)
                 if m:
                     deps.append(m.group(1))
 
@@ -270,19 +270,28 @@ def build_internal_deps(repos_data, org):
 
     normalized_map = {normalize(n): n for n in repo_names}
 
+    def try_match(name, exclude):
+        if name in repo_names and name != exclude:
+            return name
+        norm = normalize(name)
+        if norm in normalized_map and normalized_map[norm] != exclude:
+            return normalized_map[norm]
+        return None
+
     for repo in repos_data:
         internal = set()
         for dep in repo["dependencies"]["external"]:
-            # Strip scope prefix (e.g. @myorg/pkg -> pkg)
+            # Strip npm scope prefix (e.g. @myorg/pkg -> pkg)
             clean = re.sub(r'^@[^/]+/', '', dep)
-            # Exact match
-            if clean in repo_names and clean != repo["name"]:
-                internal.add(clean)
-            else:
-                # Normalized match: case-insensitive, ignore hyphens/underscores/dots
-                norm = normalize(clean)
-                if norm in normalized_map and normalized_map[norm] != repo["name"]:
-                    internal.add(normalized_map[norm])
+            match = try_match(clean, repo["name"])
+            if match:
+                internal.add(match)
+            elif '/' in clean:
+                # Path-style deps (e.g. Go: github.com/org/repo) — try last segment
+                last_seg = clean.rstrip('/').split('/')[-1]
+                match = try_match(last_seg, repo["name"])
+                if match:
+                    internal.add(match)
         repo["dependencies"]["internal"] = sorted(internal)
 
 

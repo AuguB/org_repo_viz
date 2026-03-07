@@ -595,21 +595,27 @@ html, body { height: 100%; overflow: hidden; font-family: -apple-system, BlinkMa
         </div>
         <div class="collapsible-body closed" id="force-body">
           <div class="force-group" style="margin-top:8px">
-            <label class="force-label">Center force <span class="filter-range-val" id="lp-gravity-val">0.005</span></label>
+            <label class="force-label">Global attraction <span class="filter-range-val" id="lp-charge-val">20</span></label>
             <div class="filter-range-row">
-              <input type="range" class="filter-range" id="lp-gravity" min="0" max="50" value="5">
+              <input type="range" class="filter-range" id="lp-charge" min="0" max="100" value="20">
             </div>
           </div>
           <div class="force-group">
-            <label class="force-label">Attractive force <span class="filter-range-val" id="lp-attract-val">0.4</span></label>
+            <label class="force-label">Link strength <span class="filter-range-val" id="lp-attract-val">0.5</span></label>
             <div class="filter-range-row">
-              <input type="range" class="filter-range" id="lp-attract" min="0" max="20" value="8">
+              <input type="range" class="filter-range" id="lp-attract" min="0" max="20" value="10">
             </div>
           </div>
           <div class="force-group">
-            <label class="force-label">Min distance <span class="filter-range-val" id="lp-mindist-val">150</span></label>
+            <label class="force-label">Link distance <span class="filter-range-val" id="lp-linkdist-val">200</span></label>
             <div class="filter-range-row">
-              <input type="range" class="filter-range" id="lp-mindist" min="20" max="500" step="10" value="150">
+              <input type="range" class="filter-range" id="lp-linkdist" min="50" max="500" step="10" value="200">
+            </div>
+          </div>
+          <div class="force-group">
+            <label class="force-label">Collision radius <span class="filter-range-val" id="lp-mindist-val">150</span></label>
+            <div class="filter-range-row">
+              <input type="range" class="filter-range" id="lp-mindist" min="50" max="500" step="10" value="150">
             </div>
           </div>
           <button class="section-expand-btn" onclick="resetLayout()" style="margin-top:4px">Restart simulation</button>
@@ -788,9 +794,8 @@ function initGraph() {
   // Build simulation but don't start ticking yet
   simulation = d3.forceSimulation(nodes)
     .randomSource(d3.randomLcg(42))
-    .force('link', d3.forceLink(links).id(d => d.id).distance(220))
-    .force('charge', d3.forceManyBody().strength(-500))
-    .force('gravity', d3.forceRadial(0, W / 2, H / 2).strength(0.005))
+    .force('link',      d3.forceLink(links).id(d => d.id).distance(200).strength(0.5))
+    .force('charge',    d3.forceManyBody().strength(20))
     .force('collision', d3.forceCollide(150))
     .stop();
 
@@ -1168,15 +1173,20 @@ function initLayoutControls() {
     });
   };
 
-  wire('lp-gravity', 'lp-gravity-val',
-    raw => raw / 10000,
-    v => v.toFixed(4),
-    v => simulation.force('gravity').strength(v)
+  wire('lp-charge', 'lp-charge-val',
+    raw => raw,
+    v => v,
+    v => simulation.force('charge').strength(v)
   );
   wire('lp-attract', 'lp-attract-val',
     raw => raw / 20,
     v => v.toFixed(1),
     v => simulation.force('link').strength(v)
+  );
+  wire('lp-linkdist', 'lp-linkdist-val',
+    raw => raw,
+    v => v,
+    v => simulation.force('link').distance(v)
   );
   wire('lp-mindist', 'lp-mindist-val',
     raw => raw,
@@ -1253,7 +1263,7 @@ function applyVisibility() {
   }
 
   updateEdgeVisibility();
-  updateStatCounters();
+  updateStats();
 }
 
 function updateEdgeVisibility() {
@@ -1270,7 +1280,6 @@ function resetLayout() {
   const W = container.clientWidth;
   const H = container.clientHeight;
   const rng = d3.randomLcg(42);
-  simulation.force('gravity').x(W / 2).y(H / 2);
   nodes.forEach(n => {
     n.fx = null; n.fy = null;
     n.x = W / 2 + (rng() - 0.5) * Math.min(W, 600);
@@ -1613,35 +1622,28 @@ function onTick() {
 // ============================================================
 // Stats sidebar
 // ============================================================
-function updateStatCounters() {
-  const total   = nodes.length;
-  const visible = nodes.filter(n => !n._hidden);
-  const visCount = visible.length;
-
-  const reposEl = document.getElementById('stat-repos');
-  if (visCount === total) {
-    reposEl.textContent = total;
-  } else {
-    reposEl.innerHTML = `${visCount}<span class="stat-total"> /${total}</span>`;
-  }
-
-  const visContribs = new Set(visible.flatMap(n => (n.contributors || []).map(c => c.login)));
-  const allContribs = new Set(nodes.flatMap(n => (n.contributors || []).map(c => c.login)));
-  const contribsEl  = document.getElementById('stat-contributors');
-  if (visContribs.size === allContribs.size) {
-    contribsEl.textContent = allContribs.size;
-  } else {
-    contribsEl.innerHTML = `${visContribs.size}<span class="stat-total"> /${allContribs.size}</span>`;
-  }
+function initStats() {
+  document.getElementById('stats-org-name').textContent = DATA.org;
+  updateStats();
 }
 
-function initStats() {
-  const repos = DATA.repos;
-  document.getElementById('stats-org-name').textContent = DATA.org;
-  document.getElementById('stat-repos').textContent = repos.length;
+function updateStats() {
+  const total   = nodes.length;
+  const visible = nodes.filter(n => !n._hidden);
+  const repos   = visible.map(n => DATA.repos.find(r => r.id === n.id)).filter(Boolean);
 
-  const allContribs = new Set(repos.flatMap(r => r.contributors.map(c => c.login)));
-  document.getElementById('stat-contributors').textContent = allContribs.size;
+  // Counters
+  const reposEl = document.getElementById('stat-repos');
+  reposEl.innerHTML = visible.length < total
+    ? `${visible.length}<span class="stat-total"> /${total}</span>`
+    : `${total}`;
+
+  const visContribs = new Set(repos.flatMap(r => r.contributors.map(c => c.login)));
+  const allContribs = new Set(DATA.repos.flatMap(r => r.contributors.map(c => c.login)));
+  const contribsEl  = document.getElementById('stat-contributors');
+  contribsEl.innerHTML = visContribs.size < allContribs.size
+    ? `${visContribs.size}<span class="stat-total"> /${allContribs.size}</span>`
+    : `${allContribs.size}`;
 
   // Languages
   const langTotals = {};
@@ -1668,7 +1670,7 @@ function initStats() {
     `<div class="sparkline-wrap">${sparkline(weeklyTotals, 228, 40)}</div>
      <div style="font-size:10px;color:#8b949e;margin-top:2px">Past 52 weeks · ${weeklyTotals.reduce((a,b)=>a+b,0)} total commits</div>`;
 
-  // Popular external deps
+  // External deps
   const depCounts = {};
   repos.forEach(r => (r.dependencies.external || []).forEach(d => {
     depCounts[d] = (depCounts[d] || 0) + 1;
@@ -1682,7 +1684,7 @@ function initStats() {
       <span class="dep-stat-count">${count} repos</span>
     </div>`).join('') || '<em style="color:#8b949e;font-size:11px">No shared dependencies found</em>';
 
-  // Top contributors
+  // Contributors
   const contribTotals = {};
   const contribMeta = {};
   repos.forEach(r => r.contributors.forEach(c => {
