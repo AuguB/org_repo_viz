@@ -416,6 +416,11 @@ Examples:
         repos = [r for r in repos if not r.get("archived")]
     if args.skip_private:
         repos = [r for r in repos if not r.get("private")]
+
+    # Always exclude the .github meta-repo and this tool's own repo
+    self_repo = os.environ.get("GITHUB_REPOSITORY", "").split("/")[-1]
+    repos = [r for r in repos if r.get("name") != ".github" and (not self_repo or r.get("name") != self_repo)]
+
     if args.limit:
         repos = repos[: args.limit]
 
